@@ -143,7 +143,7 @@ def filter_all_companies(df):
 #########################
 
 def main():
-    st.title("All Companies Exclusion Analysis (Excluding Upstream & Midstream Expansion)")
+    st.title("Level 2 Exclusion Filter for O&G")
 
     uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
 
@@ -187,7 +187,7 @@ def main():
         st.download_button(
             "Download Processed File",
             output,
-            "all_companies_exclusion.xlsx",
+            "O&G Companies Level 2 Exclusion.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
