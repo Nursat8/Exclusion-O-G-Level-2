@@ -6,3 +6,4 @@ seaborn
 yfinance
 scipy
 requests
+openpyxl
