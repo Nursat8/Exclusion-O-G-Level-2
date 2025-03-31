@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 from io import BytesIO
+import re
+import numpy as np
 
 #########################
 # 1) HELPER FUNCTIONS
@@ -163,6 +165,23 @@ def main():
 
         excluded, retained = filter_all_companies(df_all)
 
+        # Remove "Equity" string in the BB Ticker column for output file only
+        def remove_equity_from_bb_ticker(df):
+            df = df.copy()
+            if "BB Ticker" in df.columns:
+                df["BB Ticker"] = (
+                    df["BB Ticker"]
+                    .astype(str)
+                    .str.replace(r"\u00A0", " ", regex=True)
+                    .str.replace(r"(?i)\bEquity\b", "", regex=True)
+                    .str.replace(r"\s+", " ", regex=True)
+                    .str.strip()
+                )
+            return df
+
+        excluded = remove_equity_from_bb_ticker(excluded)
+        retained = remove_equity_from_bb_ticker(retained)
+
         # STATS
         total_companies = len(excluded) + len(retained)
         st.subheader("Summary Statistics")
@@ -179,7 +198,7 @@ def main():
 
         # Save to Excel
         output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             excluded.to_excel(writer, sheet_name="Excluded", index=False)
             retained.to_excel(writer, sheet_name="Retained", index=False)
         output.seek(0)
@@ -193,4 +212,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
