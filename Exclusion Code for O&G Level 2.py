@@ -10,11 +10,11 @@ import numpy as np
 #########################
 
 def flatten_multilevel_columns(df):
-    """Flatten multi-level column headers into single strings."""
-    df.columns = [
-        " ".join(str(level) for level in col).strip()
-        for col in df.columns
-    ]
+    # pull only the second level of a MultiIndex, fall back to str for single-level
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(1).astype(str)
+    else:
+        df.columns = df.columns.astype(str)
     return df
 
 def find_column(df, possible_matches, required=True):
