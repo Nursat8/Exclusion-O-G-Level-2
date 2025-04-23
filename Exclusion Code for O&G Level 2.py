@@ -73,7 +73,7 @@ def rename_columns(df):
         old_col = find_column(df, patterns, required=False)
         if old_col and old_col != new_col:
             df.rename(columns={old_col: new_col}, inplace=True)
-
+    df = df.loc[:, ~df.columns.duplicated(keep='last')]
     return df
 
 #########################
