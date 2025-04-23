@@ -50,11 +50,16 @@ def find_column(df, possible_matches, required=True):
 
 def rename_columns(df):
     """
-    Flatten multi-level headers and ensure correct column detection.
+    Flatten multi-level headers, drop the Parent Company column,
+    then shift and rename.
     """
+    # 1) flatten multi‐level into strings
     df = flatten_multilevel_columns(df)
-    
-    # Ensure row 7 in Excel is row 0 in pandas (Shift up by 1 row)
+
+    # 2) drop the Parent Company column so find_column("company") can only ever hit the real one
+    df = df.loc[:, ~df.columns.str.lower().str.startswith("parent company")]
+
+    # 3) shift up one row (Excel row 7 → pandas row 0)
     df = df.iloc[1:].reset_index(drop=True)
 
     rename_map = {
