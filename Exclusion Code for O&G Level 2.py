@@ -10,32 +10,45 @@ import numpy as np
 #########################
 
 def flatten_multilevel_columns(df):
-    """Flatten multi‐level column headers into single strings."""
+    """Flatten multi‐level column headers into single, neatly spaced strings."""
     df.columns = [
-        " ".join(str(level) for level in col).strip()
+        " ".join(str(level).strip() for level in col).strip()
         for col in df.columns
     ]
     return df
 
 def find_column(df, possible_matches, required=True):
     """Find the first column matching any item in possible_matches,
-    preferring an exact match on the whole header before falling back to substring."""
-    norm_map = {
-        col: col.strip().lower().replace("\n", " ")
-        for col in df.columns
-    }
-    # 1) exact
+    preferring an exact match on the whole header before falling back to substring.
+    Both column names and patterns are normalized by lowercasing, replacing newlines
+    with spaces, and collapsing any run of whitespace to a single space."""
+    # build a map of normalized → actual
+    norm_map = {}
+    for col in df.columns:
+        # lowercase, replace newlines, collapse whitespace
+        norm = col.strip().lower().replace("\n", " ")
+        norm = re.sub(r"\s+", " ", norm)
+        norm_map[col] = norm
+
+    # normalize patterns the same way
+    pats = []
     for pattern in possible_matches:
-        pat = pattern.strip().lower().replace("\n", " ")
+        p = pattern.strip().lower().replace("\n", " ")
+        p = re.sub(r"\s+", " ", p)
+        pats.append(p)
+
+    # 1) exact-match pass
+    for pat in pats:
         for col, col_norm in norm_map.items():
             if col_norm == pat:
                 return col
-    # 2) substring
+
+    # 2) substring pass
     for col, col_norm in norm_map.items():
-        for pattern in possible_matches:
-            pat = pattern.strip().lower().replace("\n", " ")
+        for pat in pats:
             if pat in col_norm:
                 return col
+
     if required:
         raise ValueError(
             f"Could not find a required column among {possible_matches}\n"
@@ -53,13 +66,13 @@ def filter_upstream_companies(df):
 
     # locate the three key columns
     resources_col = find_column(df,
-        ["resources under development and field evaluation"],
+        ["Resources under Development and Field Evaluation"],
         required=True)
     capex_col = find_column(df,
-        ["exploration capex 3-year average", "exploration capex 3 year average"],
+        ["Exploration CAPEX 3-year average", "Exploration CAPEX 3 year average"],
         required=True)
     short_term_col = find_column(df,
-        ["short-term expansion ≥20 mmboe", "short term expansion"],
+        ["Short-Term Expansion ≥20 mmboe", "Short Term Expansion"],
         required=True)
 
     # ensure they exist
@@ -71,14 +84,14 @@ def filter_upstream_companies(df):
     for c in (resources_col, capex_col):
         df[c] = (
             df[c].astype(str)
-                .str.replace(",", "", regex=True)
+                 .str.replace(",", "", regex=True)
         )
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
     # build exclusion flags
     df["Resources_Exclusion_Flag"] = df[resources_col].isna() | (df[resources_col] > 0)
     df["CAPEX_Exclusion_Flag"]    = df[capex_col].isna()    | (df[capex_col]    > 0)
-    df["ShortTerm_Exclusion_Flag"] = (
+    df["ShortTerm_Exclusion_Flag"]= (
         df[short_term_col]
           .astype(str)
           .str.strip()
@@ -98,7 +111,7 @@ def filter_upstream_companies(df):
         if row["Resources_Exclusion_Flag"]:
             reasons.append("Missing or >0 Resources under development")
         if row["CAPEX_Exclusion_Flag"]:
-            reasons.append("Missing or >0 Exploration CAPEX 3-year avg")
+            reasons.append("Missing or >0 Exploration CAPEX avg")
         if row["ShortTerm_Exclusion_Flag"]:
             reasons.append("Short-Term Expansion ≥20 mmboe = Yes")
         return "; ".join(reasons)
@@ -110,7 +123,7 @@ def filter_upstream_companies(df):
     retained = df[~df["Excluded"]].copy()
 
     # pick columns to show
-    company_col = find_column(df, ["company"], required=False) or df.columns[0]
+    company_col = find_column(df, ["Company"], required=False) or df.columns[0]
     out_cols = [
         company_col,
         resources_col,
@@ -118,7 +131,6 @@ def filter_upstream_companies(df):
         short_term_col,
         "Exclusion Reason",
     ]
-
     return excluded[out_cols], retained[out_cols]
 
 #########################
@@ -194,7 +206,6 @@ def filter_all_companies(df):
 
     excluded_df = df[df["Excluded"]].copy()
     retained_df = df[~df["Excluded"]].copy()
-
     final_cols = [
         "Company", "BB Ticker", "ISIN Equity", "LEI",
         "GOGEL Tab",
@@ -228,13 +239,11 @@ def main():
     if "All Companies" in xls.sheet_names:
         df_all = pd.read_excel(uploaded_file, sheet_name="All Companies", header=[3,4])
         excluded_all, retained_all = filter_all_companies(df_all)
-
         st.subheader("All Companies – Summary")
         total = len(excluded_all) + len(retained_all)
         st.write(f"**Total Companies Processed:** {total}")
         st.write(f"**Excluded (All):** {len(excluded_all)}")
         st.write(f"**Retained (All):** {len(retained_all)}")
-
         st.subheader("All Companies – Excluded")
         st.dataframe(excluded_all)
         st.subheader("All Companies – Retained")
@@ -246,7 +255,6 @@ def main():
     if "Upstream" in xls.sheet_names:
         df_up = pd.read_excel(uploaded_file, sheet_name="Upstream", header=[3,4])
         excluded_up, retained_up = filter_upstream_companies(df_up)
-
         st.subheader("Upstream – Excluded")
         st.dataframe(excluded_up)
         st.subheader("Upstream – Retained")
