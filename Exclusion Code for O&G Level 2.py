@@ -1,16 +1,14 @@
 import streamlit as st
 import pandas as pd
-import io
+import numpy as np
 from io import BytesIO
 import re
-import numpy as np
 
 #########################
 # 1) HELPER FUNCTIONS
 #########################
 
 def flatten_multilevel_columns(df):
-    """Flatten multi‐level column headers into single, neatly spaced strings."""
     df.columns = [
         " ".join(str(level).strip() for level in col).strip()
         for col in df.columns
@@ -18,42 +16,31 @@ def flatten_multilevel_columns(df):
     return df
 
 def find_column(df, possible_matches, required=True):
-    """Find the first column matching any item in possible_matches,
-    preferring an exact match on the whole header before falling back to substring.
-    Both column names and patterns are normalized by lowercasing, replacing newlines
-    with spaces, and collapsing any run of whitespace to a single space."""
-    # build a map of normalized → actual
     norm_map = {}
     for col in df.columns:
-        # lowercase, replace newlines, collapse whitespace
         norm = col.strip().lower().replace("\n", " ")
         norm = re.sub(r"\s+", " ", norm)
         norm_map[col] = norm
 
-    # normalize patterns the same way
     pats = []
     for pattern in possible_matches:
         p = pattern.strip().lower().replace("\n", " ")
         p = re.sub(r"\s+", " ", p)
         pats.append(p)
 
-    # 1) exact-match pass
+    # 1) exact
     for pat in pats:
         for col, col_norm in norm_map.items():
             if col_norm == pat:
                 return col
-
-    # 2) substring pass
+    # 2) substring
     for col, col_norm in norm_map.items():
         for pat in pats:
             if pat in col_norm:
                 return col
 
     if required:
-        raise ValueError(
-            f"Could not find a required column among {possible_matches}\n"
-            f"Available columns: {list(df.columns)}"
-        )
+        raise ValueError(f"Could not find a required column among {possible_matches}\nAvailable columns: {list(df.columns)}")
     return None
 
 #########################
@@ -61,7 +48,6 @@ def find_column(df, possible_matches, required=True):
 #########################
 
 def filter_upstream_companies(df):
-    """Parses 'Upstream' sheet and applies custom exclusion logic."""
     df = flatten_multilevel_columns(df)
 
     # locate the three key columns
@@ -75,12 +61,7 @@ def filter_upstream_companies(df):
         ["Short-Term Expansion ≥20 mmboe", "Short Term Expansion"],
         required=True)
 
-    # ensure they exist
-    for col in (resources_col, capex_col, short_term_col):
-        if col not in df.columns:
-            df[col] = np.nan
-
-    # convert numeric columns
+    # coerce numeric columns
     for c in (resources_col, capex_col):
         df[c] = (
             df[c].astype(str)
@@ -98,6 +79,7 @@ def filter_upstream_companies(df):
           .str.lower()
           .eq("yes")
     )
+
     df["Excluded"] = (
         df[["Resources_Exclusion_Flag",
             "CAPEX_Exclusion_Flag",
@@ -105,24 +87,24 @@ def filter_upstream_companies(df):
         .any(axis=1)
     )
 
-    # reasons
+    # assign the exact reason strings you requested
     def make_reason(row):
         reasons = []
         if row["Resources_Exclusion_Flag"]:
-            reasons.append("Missing or >0 Resources under development")
+            reasons.append("Resources under development empty or >0")
         if row["CAPEX_Exclusion_Flag"]:
-            reasons.append("Missing or >0 Exploration CAPEX avg")
+            reasons.append("Exploration CAPEX 3-year average empty or >0")
         if row["ShortTerm_Exclusion_Flag"]:
             reasons.append("Short-Term Expansion ≥20 mmboe = Yes")
         return "; ".join(reasons)
 
     df["Exclusion Reason"] = df.apply(make_reason, axis=1)
 
-    # split out
+    # split into excluded vs retained
     excluded = df[df["Excluded"]].copy()
     retained = df[~df["Excluded"]].copy()
 
-    # pick columns to show
+    # choose columns to output
     company_col = find_column(df, ["Company"], required=False) or df.columns[0]
     out_cols = [
         company_col,
@@ -141,6 +123,7 @@ def rename_columns(df):
     df = flatten_multilevel_columns(df)
     df = df.loc[:, ~df.columns.str.lower().str.startswith("parent company")]
     df = df.iloc[1:].reset_index(drop=True)
+
     rename_map = {
         "Company": ["company"],
         "GOGEL Tab": ["gogel tab"],
@@ -156,8 +139,7 @@ def rename_columns(df):
         old = find_column(df, patterns, required=False)
         if old and old != new_col:
             df.rename(columns={old: new_col}, inplace=True)
-    df = df.loc[:, ~df.columns.duplicated(keep='last')]
-    return df
+    return df.loc[:, ~df.columns.duplicated(keep='last')]
 
 def filter_all_companies(df):
     df = rename_columns(df)
@@ -170,18 +152,19 @@ def filter_all_companies(df):
     ]
     for col in required_columns:
         if col not in df.columns:
-            df[col] = None if col in ["Company", "GOGEL Tab", "BB Ticker", "ISIN Equity", "LEI"] else 0
-    numeric_cols = [
+            df[col] = None if col in ["Company","GOGEL Tab","BB Ticker","ISIN Equity","LEI"] else 0
+
+    # convert to numeric
+    for c in [
         "Length of Pipelines under Development",
         "Liquefaction Capacity (Export)",
         "Regasification Capacity (Import)",
         "Total Capacity under Development"
-    ]
-    for c in numeric_cols:
+    ]:
         df[c] = (
             df[c].astype(str)
-               .str.replace("%", "", regex=True)
-               .str.replace(",", "", regex=True)
+               .str.replace("%","",regex=True)
+               .str.replace(",","",regex=True)
         )
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
@@ -194,7 +177,7 @@ def filter_all_companies(df):
     )
     df["Excluded"] = df["Upstream_Exclusion_Flag"] | df["Midstream_Exclusion_Flag"]
 
-    def get_exclusion_reason(row):
+    def get_reason(row):
         reasons = []
         if row["Upstream_Exclusion_Flag"]:
             reasons.append("Upstream in GOGEL Tab")
@@ -202,13 +185,12 @@ def filter_all_companies(df):
             reasons.append("Midstream Expansion > 0")
         return "; ".join(reasons)
 
-    df["Exclusion Reason"] = df.apply(get_exclusion_reason, axis=1)
+    df["Exclusion Reason"] = df.apply(get_reason, axis=1)
+    excluded = df[df["Excluded"]].copy()
+    retained = df[~df["Excluded"]].copy()
 
-    excluded_df = df[df["Excluded"]].copy()
-    retained_df = df[~df["Excluded"]].copy()
     final_cols = [
-        "Company", "BB Ticker", "ISIN Equity", "LEI",
-        "GOGEL Tab",
+        "Company","BB Ticker","ISIN Equity","LEI","GOGEL Tab",
         "Length of Pipelines under Development",
         "Liquefaction Capacity (Export)",
         "Regasification Capacity (Import)",
@@ -216,19 +198,18 @@ def filter_all_companies(df):
         "Exclusion Reason"
     ]
     for c in final_cols:
-        for d in (excluded_df, retained_df):
+        for d in (excluded, retained):
             if c not in d.columns:
                 d[c] = None
 
-    return excluded_df[final_cols], retained_df[final_cols]
+    return excluded[final_cols], retained[final_cols]
 
 #########################
-# 4) STREAMLIT APP
+# 4) STREAMLIT UI
 #########################
 
 def main():
     st.title("Level 2 Exclusion Filter for O&G")
-
     uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx"])
     if not uploaded_file:
         return
@@ -238,44 +219,37 @@ def main():
     # All Companies
     if "All Companies" in xls.sheet_names:
         df_all = pd.read_excel(uploaded_file, sheet_name="All Companies", header=[3,4])
-        excluded_all, retained_all = filter_all_companies(df_all)
+        exc_all, ret_all = filter_all_companies(df_all)
         st.subheader("All Companies – Summary")
-        total = len(excluded_all) + len(retained_all)
-        st.write(f"**Total Companies Processed:** {total}")
-        st.write(f"**Excluded (All):** {len(excluded_all)}")
-        st.write(f"**Retained (All):** {len(retained_all)}")
-        st.subheader("All Companies – Excluded")
-        st.dataframe(excluded_all)
-        st.subheader("All Companies – Retained")
-        st.dataframe(retained_all)
+        st.write(f"Total: {len(exc_all)+len(ret_all)} | Excluded: {len(exc_all)} | Retained: {len(ret_all)}")
+        st.subheader("Excluded (All Companies)");   st.dataframe(exc_all)
+        st.subheader("Retained (All Companies)");  st.dataframe(ret_all)
     else:
         st.error("No sheet named 'All Companies'.")
 
     # Upstream
     if "Upstream" in xls.sheet_names:
         df_up = pd.read_excel(uploaded_file, sheet_name="Upstream", header=[3,4])
-        excluded_up, retained_up = filter_upstream_companies(df_up)
-        st.subheader("Upstream – Excluded")
-        st.dataframe(excluded_up)
-        st.subheader("Upstream – Retained")
-        st.dataframe(retained_up)
+        exc_up, ret_up = filter_upstream_companies(df_up)
+        st.subheader("Upstream – Excluded");   st.dataframe(exc_up)
+        st.subheader("Upstream – Retained");  st.dataframe(ret_up)
     else:
         st.info("No sheet named 'Upstream' to process.")
 
-    # Download all results in one file
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    # Download combined results
+    out = BytesIO()
+    with pd.ExcelWriter(out, engine="xlsxwriter") as writer:
         if "All Companies" in xls.sheet_names:
-            excluded_all.to_excel(writer, sheet_name="All Excluded", index=False)
-            retained_all.to_excel(writer, sheet_name="All Retained", index=False)
+            exc_all.to_excel(writer, sheet_name="All Excluded",   index=False)
+            ret_all.to_excel(writer, sheet_name="All Retained",  index=False)
         if "Upstream" in xls.sheet_names:
-            excluded_up.to_excel(writer, sheet_name="Upstream Excluded", index=False)
-            retained_up.to_excel(writer, sheet_name="Upstream Retained", index=False)
-    output.seek(0)
+            exc_up.to_excel(writer, sheet_name="Upstream Excluded", index=False)
+            ret_up.to_excel(writer, sheet_name="Upstream Retained",index=False)
+    out.seek(0)
 
     st.download_button(
-        "Download Processed File",
-        output,
+        "Download Results",
+        out,
         "O&G_Exclusion_Results.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
