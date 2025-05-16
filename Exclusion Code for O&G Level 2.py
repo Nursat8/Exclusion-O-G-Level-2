@@ -48,9 +48,13 @@ def find_column(df, possible_matches, required=True):
 #########################
 
 def filter_upstream_companies(df):
+    """Parses 'Upstream' sheet and applies custom exclusion logic."""
+    # 1) flatten multi‐level into strings
     df = flatten_multilevel_columns(df)
+    # 2) drop any Parent Company column so we only ever use the real Company
+    df = df.loc[:, ~df.columns.str.lower().str.startswith("parent company")]
 
-    # locate the three key columns
+    # 3) locate the three key columns
     resources_col = find_column(df,
         ["Resources under Development and Field Evaluation"],
         required=True)
@@ -61,17 +65,19 @@ def filter_upstream_companies(df):
         ["Short-Term Expansion ≥20 mmboe", "Short Term Expansion"],
         required=True)
 
-    # coerce numeric columns
+    # 4) coerce numeric columns (remove commas, parse)
     for c in (resources_col, capex_col):
         df[c] = (
             df[c].astype(str)
                  .str.replace(",", "", regex=True)
-        )
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+        ).pipe(pd.to_numeric, errors="coerce")
 
-    # build exclusion flags
-    df["Resources_Exclusion_Flag"] = df[resources_col].isna() | (df[resources_col] > 0)
-    df["CAPEX_Exclusion_Flag"]    = df[capex_col].isna()    | (df[capex_col]    > 0)
+    # 5) build exclusion flags:
+    #    – Resources > 0
+    #    – CAPEX > 0
+    #    – Short-Term Expansion == "yes"
+    df["Resources_Exclusion_Flag"] = df[resources_col] > 0
+    df["CAPEX_Exclusion_Flag"]    = df[capex_col]     > 0
     df["ShortTerm_Exclusion_Flag"]= (
         df[short_term_col]
           .astype(str)
@@ -79,33 +85,33 @@ def filter_upstream_companies(df):
           .str.lower()
           .eq("yes")
     )
+    df["Excluded"] = df[[
+        "Resources_Exclusion_Flag",
+        "CAPEX_Exclusion_Flag",
+        "ShortTerm_Exclusion_Flag"
+    ]].any(axis=1)
 
-    df["Excluded"] = (
-        df[["Resources_Exclusion_Flag",
-            "CAPEX_Exclusion_Flag",
-            "ShortTerm_Exclusion_Flag"]]
-        .any(axis=1)
-    )
-
-    # assign the exact reason strings you requested
+    # 6) assign the precise reason strings
     def make_reason(row):
         reasons = []
         if row["Resources_Exclusion_Flag"]:
-            reasons.append("Resources under development empty or >0")
+            reasons.append("Resources under development > 0")
         if row["CAPEX_Exclusion_Flag"]:
-            reasons.append("Exploration CAPEX 3-year average empty or >0")
+            reasons.append("Exploration CAPEX 3-year average > 0")
         if row["ShortTerm_Exclusion_Flag"]:
             reasons.append("Short-Term Expansion ≥20 mmboe = Yes")
         return "; ".join(reasons)
 
     df["Exclusion Reason"] = df.apply(make_reason, axis=1)
 
-    # split into excluded vs retained
+    # 7) split into excluded vs retained
     excluded = df[df["Excluded"]].copy()
     retained = df[~df["Excluded"]].copy()
 
-    # choose columns to output
-    company_col = find_column(df, ["Company"], required=False) or df.columns[0]
+    # 8) find the real Company column
+    company_col = find_column(df, ["Company"], required=True)
+
+    # 9) select and return
     out_cols = [
         company_col,
         resources_col,
@@ -115,9 +121,6 @@ def filter_upstream_companies(df):
     ]
     return excluded[out_cols], retained[out_cols]
 
-#########################
-# 3) ALL-COMPANIES EXCLUSION (unchanged)
-#########################
 
 def rename_columns(df):
     df = flatten_multilevel_columns(df)
