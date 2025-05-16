@@ -49,37 +49,44 @@ def find_column(df, possible_matches, required=True):
 
 def filter_upstream_companies(df):
     """Parses 'Upstream' sheet and applies custom exclusion logic."""
-    # 1) flatten multi‐level into strings
+    # 1) flatten headers & drop Parent Company
     df = flatten_multilevel_columns(df)
-    # 2) drop any Parent Company column so we only ever use the real Company
     df = df.loc[:, ~df.columns.str.lower().str.startswith("parent company")]
 
-    # 3) locate the three key columns
-    resources_col = find_column(df,
+    # 2) find the four key columns
+    resources_col    = find_column(df,
         ["Resources under Development and Field Evaluation"],
         required=True)
-    capex_col = find_column(df,
+    capex_avg_col    = find_column(df,
         ["Exploration CAPEX 3-year average", "Exploration CAPEX 3 year average"],
         required=True)
-    short_term_col = find_column(df,
+    short_term_col   = find_column(df,
         ["Short-Term Expansion ≥20 mmboe", "Short Term Expansion"],
         required=True)
+    exp_capex10_col  = find_column(df,
+        ["Exploration CAPEX ≥10 MUSD", "Exploration CAPEX 10 MUSD"],
+        required=True)
 
-    # 4) coerce numeric columns (remove commas, parse)
-    for c in (resources_col, capex_col):
+    # 3) coerce the two numeric columns
+    for c in (resources_col, capex_avg_col):
         df[c] = (
             df[c].astype(str)
                  .str.replace(",", "", regex=True)
-        ).pipe(pd.to_numeric, errors="coerce")
+        )
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    # 5) build exclusion flags:
-    #    – Resources > 0
-    #    – CAPEX > 0
-    #    – Short-Term Expansion == "yes"
-    df["Resources_Exclusion_Flag"] = df[resources_col] > 0
-    df["CAPEX_Exclusion_Flag"]    = df[capex_col]     > 0
-    df["ShortTerm_Exclusion_Flag"]= (
+    # 4) build exclusion flags
+    df["Resources_Exclusion_Flag"]     = df[resources_col] > 0
+    df["CAPEX_Avg_Exclusion_Flag"]     = df[capex_avg_col] > 0
+    df["ShortTerm_Exclusion_Flag"]     = (
         df[short_term_col]
+          .astype(str)
+          .str.strip()
+          .str.lower()
+          .eq("yes")
+    )
+    df["Exploration10M_Exclusion_Flag"]= (
+        df[exp_capex10_col]
           .astype(str)
           .str.strip()
           .str.lower()
@@ -87,40 +94,43 @@ def filter_upstream_companies(df):
     )
     df["Excluded"] = df[[
         "Resources_Exclusion_Flag",
-        "CAPEX_Exclusion_Flag",
-        "ShortTerm_Exclusion_Flag"
+        "CAPEX_Avg_Exclusion_Flag",
+        "ShortTerm_Exclusion_Flag",
+        "Exploration10M_Exclusion_Flag"
     ]].any(axis=1)
 
-    # 6) assign the precise reason strings
+    # 5) compose exact exclusion reasons
     def make_reason(row):
         reasons = []
         if row["Resources_Exclusion_Flag"]:
             reasons.append("Resources under development > 0")
-        if row["CAPEX_Exclusion_Flag"]:
+        if row["CAPEX_Avg_Exclusion_Flag"]:
             reasons.append("Exploration CAPEX 3-year average > 0")
         if row["ShortTerm_Exclusion_Flag"]:
             reasons.append("Short-Term Expansion ≥20 mmboe = Yes")
+        if row["Exploration10M_Exclusion_Flag"]:
+            reasons.append("Exploration CAPEX ≥10 MUSD = Yes")
         return "; ".join(reasons)
 
     df["Exclusion Reason"] = df.apply(make_reason, axis=1)
 
-    # 7) split into excluded vs retained
+    # 6) split out excluded vs retained
     excluded = df[df["Excluded"]].copy()
     retained = df[~df["Excluded"]].copy()
 
-    # 8) find the real Company column
+    # 7) pick the real Company column
     company_col = find_column(df, ["Company"], required=True)
 
-    # 9) select and return
+    # 8) return only the columns you need
     out_cols = [
         company_col,
         resources_col,
-        capex_col,
+        capex_avg_col,
         short_term_col,
+        exp_capex10_col,
         "Exclusion Reason",
     ]
     return excluded[out_cols], retained[out_cols]
-
 
 def rename_columns(df):
     df = flatten_multilevel_columns(df)
